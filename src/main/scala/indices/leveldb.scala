@@ -23,14 +23,12 @@ class LevelDBKVStore(file: java.io.File) extends {
     o.sync(false)
   }
 
-} with KVStore with TableStore {
+} with KVStore {
   def read(s: String) = s(0) match {
     case 'A' => RowId(s.drop(1).toLong)
-    case 'B' => Doc(s.drop(1))
   }
 
   def write(v: Value) = v match {
-    case Doc(d) => "B" + d
     case RowId(l) => "A" + l
   }
 
@@ -52,5 +50,5 @@ class LevelDBKVStore(file: java.io.File) extends {
     }
     leveldb.write(b)
   }
-  def closedb: Unit = leveldb.close
+  def close: Unit = leveldb.close
 }

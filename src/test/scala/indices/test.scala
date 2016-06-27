@@ -7,12 +7,12 @@ import scala.collection.mutable.{ Map => MMap }
 
 class ExampleSpec extends FunSpec with Matchers with BeforeAndAfterAll {
 
-  class TestStore(map: MMap[String, Value]) extends KVStore with TableStore {
+  class TestStore(map: MMap[String, Value]) extends KVStore{
     def get(k: String): Option[Value] = map.get(k)
     def put(k: String, v: Value): Unit = map.update(k, v)
     def put(v: Seq[(String, Value)]) = v.foreach(x => put(x._1, x._2))
     def prefix(k: String) = map.filter(_._1.startsWith(k)).toList.iterator
-    def closedb = ()
+    def close = ()
   }
 
   val backing = MMap[String, Value]()

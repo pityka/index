@@ -5,29 +5,34 @@ import scala.util.Try
 sealed trait Value
 
 case class RowId(id: Long) extends Value { override def toString = id.toString }
-case class Doc(document: String) extends Value
+case class Doc(document: String)
+
+trait Log {
+  def iterator: Iterator[(RowId, Doc)]
+  def append(d: Doc): RowId
+  def get(r: RowId): Option[Doc]
+  def close: Unit
+}
 
 trait KVStore {
   def get(k: String): Option[Value]
   def prefix(k: String): Iterator[(String, Value)]
   def put(k: String, v: Value): Unit
   def put(v: Seq[(String, Value)]): Unit
-  def closedb: Unit
+  def close: Unit
 }
 
 case class NameSpace(segments: Vector[String]) {
   def suffix(value: String) = NameSpace(segments :+ value)
   def apply(value: String) = suffix(value).segments.mkString("_")
+  def current = suffix("")
 }
 object Keys {
   val root = NameSpace(Vector())
   def tables(s: String) = root.suffix("table").suffix(s)
-  val lastId = "__lastid__"
 }
 
-case class Table(name: NameSpace) {
-  val pk: NameSpace = name.suffix("pk")
-}
+case class Table(name: NameSpace)
 
 trait Indexer[-Query] {
 
@@ -63,21 +68,11 @@ case class CompoundIndexer(sub: Seq[SimpleIndexer]) extends PointIndexer[List[St
 
 }
 
-trait TableStore { self: KVStore =>
-
-  var lastId: Long = get(Keys.lastId) match {
-    case None => -1L
-    case Some(RowId(l)) => l
-  }
+class TableStore(kvstore: KVStore, log: Log) {
 
   def close = {
-    put(Keys.lastId, RowId(lastId));
-    closedb
-  }
-
-  private def newId(t: Table): Long = {
-    lastId += 1
-    lastId
+    log.close
+    kvstore.close
   }
 
   def insert(
@@ -87,22 +82,22 @@ trait TableStore { self: KVStore =>
   ): Seq[RowId] = {
 
     val (rowids, pairs) = doc.map { doc =>
-      val id = newId(t)
+      val id = log.append(doc)
 
       keys.filterNot(_.isInstanceOf[PointIndexer[_]]).foreach { k =>
-        k.insert(this, t, doc, RowId(id))
+        k.insert(kvstore, t, doc, id)
       }
 
       val indexPairs = keys.filter(_.isInstanceOf[PointIndexer[_]]).flatMap { k =>
         k.asInstanceOf[PointIndexer[_]].insertKey(t, doc).toOption.toList.map { key =>
-          (key + "!" + id, RowId(id))
+          (key + "!" + id.id, id)
         }
       }
 
-      (RowId(id), Seq(t.pk(id.toString) -> doc) ++ indexPairs)
-    }.unzip
+      id -> indexPairs
+    } unzip
 
-    put(pairs.flatten)
+    kvstore.put(pairs.flatten)
 
     rowids
   }
@@ -113,9 +108,9 @@ trait TableStore { self: KVStore =>
     keys: Seq[Indexer[_]]
   ): RowId = insert(List(doc), t, keys).head
 
-  def get(r: RowId, t: Table): Option[Doc] = get(t.pk(r.id.toString)).asInstanceOf[Option[Doc]]
+  def get(r: RowId): Option[Doc] = log.get(r)
   def get[Q](idx: Indexer[Q], v: Q, t: Table): Seq[Doc] = {
-    val rowids = idx.query(this, t, v)
-    rowids.toList.flatMap(r => get(r, t).toList)
+    val rowids = idx.query(kvstore, t, v)
+    rowids.toList.flatMap(r => get(r).toList)
   }
 }
